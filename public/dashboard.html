@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="dashboard-page">
+
+  <div class="bg-grid"></div>
+
+  <!-- ── SIDEBAR ─────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <span class="brand-icon">⬡</span>
+      <span class="brand-name">TaskFlow</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-filter="all">
+        <span class="nav-icon">◈</span> All Tasks
+      </button>
+      <button class="nav-item" data-filter="pending">
+        <span class="nav-icon">○</span> Pending
+      </button>
+      <button class="nav-item" data-filter="in-progress">
+        <span class="nav-icon">◑</span> In Progress
+      </button>
+      <button class="nav-item" data-filter="completed">
+        <span class="nav-icon">●</span> Completed
+      </button>
+    </nav>
+
+    <div class="sidebar-stats">
+      <div class="stat-item">
+        <span class="stat-num" id="totalCount">0</span>
+        <span class="stat-label">Total</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-num" id="pendingCount">0</span>
+        <span class="stat-label">Pending</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-num" id="doneCount">0</span>
+        <span class="stat-label">Done</span>
+      </div>
+    </div>
+
+    <button class="btn-logout" id="logoutBtn">↩ Logout</button>
+  </aside>
+
+  <!-- ── MAIN CONTENT ───────────────────────────────── -->
+  <main class="main-content">
+
+    <!-- Header -->
+    <header class="dash-header">
+      <div>
+        <h2 class="dash-title">My Tasks</h2>
+        <p class="dash-welcome">Welcome back, <strong id="usernameDisplay">...</strong></p>
+      </div>
+      <button class="btn-add-task" id="openModalBtn">+ New Task</button>
+    </header>
+
+    <!-- Filter info bar -->
+    <div class="filter-bar">
+      <span id="filterLabel">Showing: All Tasks</span>
+      <span id="taskCountLabel">0 tasks</span>
+    </div>
+
+    <!-- Task Grid -->
+    <div class="task-grid" id="taskGrid">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">◈</div>
+        <p>No tasks yet. Create your first task!</p>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ── ADD/EDIT TASK MODAL ────────────────────────── -->
+  <div class="modal-overlay hidden" id="taskModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">New Task</h3>
+        <button class="modal-close" id="closeModalBtn">✕</button>
+      </div>
+
+      <form id="taskForm" autocomplete="off">
+        <input type="hidden" id="taskId" value="" />
+
+        <div class="form-group">
+          <label>Task Title *</label>
+          <input type="text" id="taskTitle" placeholder="e.g. Setup Jenkins pipeline" required />
+        </div>
+
+        <div class="form-group">
+          <label>Description</label>
+          <textarea id="taskDescription" placeholder="Optional details..." rows="3"></textarea>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Priority</label>
+            <select id="taskPriority">
+              <option value="low">🟢 Low</option>
+              <option value="medium" selected>🟡 Medium</option>
+              <option value="high">🔴 High</option>
+            </select>
+          </div>
+          <div class="form-group" id="statusGroup" style="display:none">
+            <label>Status</label>
+            <select id="taskStatus">
+              <option value="pending">Pending</option>
+              <option value="in-progress">In Progress</option>
+              <option value="completed">Completed</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="taskFormError" class="error-msg hidden"></div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" id="cancelModalBtn">Cancel</button>
+          <button type="submit" class="btn-primary">
+            <span class="btn-text" id="submitBtnText">Create Task</span>
+            <span class="btn-loader hidden">●●●</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── DELETE CONFIRM MODAL ───────────────────────── -->
+  <div class="modal-overlay hidden" id="deleteModal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>Delete Task?</h3>
+        <button class="modal-close" id="cancelDeleteBtn">✕</button>
+      </div>
+      <p class="delete-msg">This action cannot be undone. The task will be permanently removed from MySQL.</p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="cancelDeleteBtn2">Cancel</button>
+        <button class="btn-danger" id="confirmDeleteBtn">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let allTasks = [];
+    let currentFilter = 'all';
+    let deleteTargetId = null;
+
+    const taskGrid    = document.getElementById('taskGrid');
+    const emptyState  = document.getElementById('emptyState');
+
+    // ── AUTH CHECK ───────────────────────────────────────
+    async function checkAuth() {
+      try {
+        const res  = await fetch('/api/me', { credentials: 'include' });
+        if (!res.ok) { window.location.href = '/'; return; }
+        const data = await res.json();
+        document.getElementById('usernameDisplay').textContent = data.username;
+      } catch {
+        window.location.href = '/';
+      }
+    }
+
+    // ── FETCH TASKS ──────────────────────────────────────
+    async function loadTasks() {
+      try {
+        const res   = await fetch('/api/tasks', { credentials: 'include' });
+        if (res.status === 401) { window.location.href = '/'; return; }
+        allTasks    = await res.json();
+        renderTasks();
+        updateStats();
+      } catch {
+        console.error('Failed to load tasks');
+      }
+    }
+
+    // ── RENDER ───────────────────────────────────────────
+    function renderTasks() {
+      const filtered = currentFilter === 'all'
+        ? allTasks
+        : allTasks.filter(t => t.status === currentFilter);
+
+      document.getElementById('filterLabel').textContent =
+        'Showing: ' + (currentFilter === 'all' ? 'All Tasks' : capitalize(currentFilter));
+      document.getElementById('taskCountLabel').textContent =
+        filtered.length + ' task' + (filtered.length !== 1 ? 's' : '');
+
+      // Remove old cards (keep empty state)
+      taskGrid.querySelectorAll('.task-card').forEach(el => el.remove());
+
+      if (filtered.length === 0) {
+        emptyState.classList.remove('hidden');
+        return;
+      }
+      emptyState.classList.add('hidden');
+
+      filtered.forEach(task => {
+        const card = document.createElement('div');
+        card.className = `task-card priority-${task.priority} status-${task.status}`;
+        card.dataset.id = task.id;
+        card.innerHTML = `
+          <div class="card-top">
+            <span class="badge priority-badge priority-${task.priority}">${task.priority}</span>
+            <span class="badge status-badge status-${task.status}">${formatStatus(task.status)}</span>
+          </div>
+          <h4 class="card-title">${escapeHtml(task.title)}</h4>
+          ${task.description ? `<p class="card-desc">${escapeHtml(task.description)}</p>` : ''}
+          <div class="card-footer">
+            <span class="card-date">${formatDate(task.created_at)}</span>
+            <div class="card-actions">
+              <button class="icon-btn edit-btn" title="Edit" onclick="openEditModal(${task.id})">✎</button>
+              <button class="icon-btn delete-btn" title="Delete" onclick="openDeleteModal(${task.id})">✕</button>
+            </div>
+          </div>
+          <div class="status-bar">
+            <button class="quick-status ${task.status === 'pending'     ? 'qs-active' : ''}" onclick="quickStatus(${task.id},'pending')">Pending</button>
+            <button class="quick-status ${task.status === 'in-progress' ? 'qs-active' : ''}" onclick="quickStatus(${task.id},'in-progress')">In Progress</button>
+            <button class="quick-status ${task.status === 'completed'   ? 'qs-active' : ''}" onclick="quickStatus(${task.id},'completed')">Done</button>
+          </div>
+        `;
+        taskGrid.appendChild(card);
+      });
+    }
+
+    function updateStats() {
+      document.getElementById('totalCount').textContent   = allTasks.length;
+      document.getElementById('pendingCount').textContent = allTasks.filter(t => t.status === 'pending').length;
+      document.getElementById('doneCount').textContent    = allTasks.filter(t => t.status === 'completed').length;
+    }
+
+    // ── QUICK STATUS CHANGE ──────────────────────────────
+    async function quickStatus(id, newStatus) {
+      try {
+        const res = await fetch(`/api/tasks/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: newStatus }),
+          credentials: 'include',
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          allTasks = allTasks.map(t => t.id === id ? updated : t);
+          renderTasks(); updateStats();
+        }
+      } catch {}
+    }
+
+    // ── MODAL: ADD TASK ──────────────────────────────────
+    document.getElementById('openModalBtn').addEventListener('click', () => openAddModal());
+    document.getElementById('closeModalBtn').addEventListener('click',  closeModal);
+    document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
+
+    function openAddModal() {
+      document.getElementById('modalTitle').textContent = 'New Task';
+      document.getElementById('submitBtnText').textContent = 'Create Task';
+      document.getElementById('taskForm').reset();
+      document.getElementById('taskId').value = '';
+      document.getElementById('statusGroup').style.display = 'none';
+      document.getElementById('taskFormError').classList.add('hidden');
+      document.getElementById('taskModal').classList.remove('hidden');
+    }
+
+    function openEditModal(id) {
+      const task = allTasks.find(t => t.id === id);
+      if (!task) return;
+      document.getElementById('modalTitle').textContent = 'Edit Task';
+      document.getElementById('submitBtnText').textContent = 'Save Changes';
+      document.getElementById('taskId').value          = task.id;
+      document.getElementById('taskTitle').value       = task.title;
+      document.getElementById('taskDescription').value = task.description || '';
+      document.getElementById('taskPriority').value    = task.priority;
+      document.getElementById('taskStatus').value      = task.status;
+      document.getElementById('statusGroup').style.display = 'flex';
+      document.getElementById('taskFormError').classList.add('hidden');
+      document.getElementById('taskModal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('taskModal').classList.add('hidden');
+    }
+
+    // ── TASK FORM SUBMIT ─────────────────────────────────
+    document.getElementById('taskForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const id          = document.getElementById('taskId').value;
+      const isEdit      = !!id;
+      const errEl       = document.getElementById('taskFormError');
+      const btn         = e.target.querySelector('.btn-primary');
+      const btnText     = btn.querySelector('.btn-text');
+      const btnLoader   = btn.querySelector('.btn-loader');
+
+      errEl.classList.add('hidden');
+      btn.disabled = true; btnText.classList.add('hidden'); btnLoader.classList.remove('hidden');
+
+      const payload = {
+        title:       document.getElementById('taskTitle').value,
+        description: document.getElementById('taskDescription').value,
+        priority:    document.getElementById('taskPriority').value,
+      };
+      if (isEdit) payload.status = document.getElementById('taskStatus').value;
+
+      try {
+        const res = await fetch(isEdit ? `/api/tasks/${id}` : '/api/tasks', {
+          method:  isEdit ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(payload),
+          credentials: 'include',
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          errEl.textContent = data.error; errEl.classList.remove('hidden');
+          btn.disabled = false; btnText.classList.remove('hidden'); btnLoader.classList.add('hidden');
+          return;
+        }
+
+        if (isEdit) {
+          allTasks = allTasks.map(t => t.id === parseInt(id) ? data : t);
+        } else {
+          allTasks.unshift(data);
+        }
+
+        renderTasks(); updateStats(); closeModal();
+      } catch {
+        errEl.textContent = 'Network error.'; errEl.classList.remove('hidden');
+      }
+      btn.disabled = false; btnText.classList.remove('hidden'); btnLoader.classList.add('hidden');
+    });
+
+    // ── DELETE MODAL ─────────────────────────────────────
+    function openDeleteModal(id) {
+      deleteTargetId = id;
+      document.getElementById('deleteModal').classList.remove('hidden');
+    }
+
+    [document.getElementById('cancelDeleteBtn'),
+     document.getElementById('cancelDeleteBtn2')].forEach(btn =>
+      btn.addEventListener('click', () => {
+        document.getElementById('deleteModal').classList.add('hidden');
+      })
+    );
+
+    document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
+      if (!deleteTargetId) return;
+      try {
+        const res = await fetch(`/api/tasks/${deleteTargetId}`, {
+          method: 'DELETE', credentials: 'include'
+        });
+        if (res.ok) {
+          allTasks = allTasks.filter(t => t.id !== deleteTargetId);
+          renderTasks(); updateStats();
+        }
+      } catch {}
+      document.getElementById('deleteModal').classList.add('hidden');
+      deleteTargetId = null;
+    });
+
+    // ── FILTER NAV ───────────────────────────────────────
+    document.querySelectorAll('.nav-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentFilter = btn.dataset.filter;
+        renderTasks();
+      });
+    });
+
+    // ── LOGOUT ───────────────────────────────────────────
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+      window.location.href = '/';
+    });
+
+    // ── CLOSE MODALS ON OVERLAY CLICK ────────────────────
+    document.querySelectorAll('.modal-overlay').forEach(overlay => {
+      overlay.addEventListener('click', e => {
+        if (e.target === overlay) overlay.classList.add('hidden');
+      });
+    });
+
+    // ── HELPERS ──────────────────────────────────────────
+    function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+    function formatStatus(s) {
+      return s === 'in-progress' ? 'In Progress' : capitalize(s);
+    }
+    function formatDate(d) {
+      return new Date(d).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
+    }
+    function escapeHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ── INIT ─────────────────────────────────────────────
+    checkAuth().then(() => loadTasks());
+  </script>
+</body>
+</html>

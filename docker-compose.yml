@@ -1,0 +1,58 @@
+# ══════════════════════════════════════════════════════
+#   DOCKER COMPOSE — Runs App + MySQL together
+#   Usage: docker-compose up --build
+# ══════════════════════════════════════════════════════
+
+version: '3.8'
+
+services:
+
+  # ── MySQL Database ────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: taskmanager_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: taskmanager
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql            # persist DB data
+      - ./db.sql:/docker-entrypoint-initdb.d/db.sql  # auto-run schema
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Node.js App ───────────────────────────────────────
+  app:
+    build: .
+    container_name: taskmanager_app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DB_HOST:     mysql
+      DB_PORT:     3306
+      DB_USER:     root
+      DB_PASSWORD: root
+      DB_NAME:     taskmanager
+      PORT:        3000
+      SESSION_SECRET: supersecretkey123
+    depends_on:
+      mysql:
+        condition: service_healthy     # wait for MySQL to be ready
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# ── Persistent Volumes ────────────────────────────────
+volumes:
+  mysql_data:
+    driver: local
