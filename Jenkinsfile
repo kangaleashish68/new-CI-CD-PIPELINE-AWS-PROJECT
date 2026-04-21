@@ -11,7 +11,7 @@ pipeline {
         DOCKER_HUB_CREDS = credentials('docker-credentials')
 
         // ✅ FIXED IMAGE NAME (IMPORTANT)
-        IMAGE_NAME   = "${DOCKER_HUB_CREDS_USR}/task-app:latest"
+        IMAGE_NAME   = "${DOCKER_HUB_CREDS_USR}/task-app"
         IMAGE_TAG    = "${IMAGE_NAME}:${BUILD_NUMBER}"
         IMAGE_LATEST = "${IMAGE_NAME}:latest"
 
