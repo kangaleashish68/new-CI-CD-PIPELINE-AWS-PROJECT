@@ -35,7 +35,7 @@ pipeline {
     environment {
         // Docker Hub
         DOCKER_HUB_CREDS = credentials('docker-credentials')
-        IMAGE_NAME        = "${DOCKER_HUB_CREDS_USR}/test-app:v3"
+        IMAGE_NAME        = "${DOCKER_HUB_CREDS_USR}/task-manager-app"
         IMAGE_TAG         = "${IMAGE_NAME}:${BUILD_NUMBER}"   // e.g. user/app:5
         IMAGE_LATEST      = "${IMAGE_NAME}:latest"
 
