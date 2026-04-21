@@ -9,16 +9,16 @@ pipeline {
 
     environment {
         DOCKER_HUB_CREDS = credentials('docker-credentials')
-        IMAGE_NAME        = "${DOCKER_HUB_CREDS_USR}/task-manager-app"
-        IMAGE_TAG         = "${IMAGE_NAME}:${BUILD_NUMBER}"
-        IMAGE_LATEST      = "${IMAGE_NAME}:latest"
 
-        K8S_NAMESPACE     = "taskmanager"
-        K8S_DEPLOYMENT    = "taskmanager-app"
-        K8S_CONTAINER     = "taskmanager-app"
+        IMAGE_NAME   = "${DOCKER_HUB_CREDS_USR}/task-manager-app"
+        IMAGE_TAG    = "${IMAGE_NAME}:${BUILD_NUMBER}"
+        IMAGE_LATEST = "${IMAGE_NAME}:latest"
 
-        APP_PORT          = "3000"
-        HEALTH_URL        = "http://localhost:${APP_PORT}/health"
+        K8S_NAMESPACE  = "taskmanager"
+        K8S_DEPLOYMENT = "taskmanager-app"
+        K8S_CONTAINER  = "taskmanager-app"
+
+        APP_PORT = "3000"
     }
 
     stages {
@@ -92,13 +92,11 @@ pipeline {
             }
         }
 
-        // ✅ FIXED DEPLOY STAGE
         stage('Deploy to Kubernetes') {
             steps {
                 echo '☸️ STAGE 6 — Deploy to Kubernetes'
 
-                withCredentials([file(credentialsId: 'kubeconfig',
-                                      variable: 'KUBECONFIG')]) {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
 
                     sh '''
                         export KUBECONFIG=$KUBECONFIG
@@ -106,7 +104,7 @@ pipeline {
                         echo "→ Cluster Info"
                         kubectl cluster-info
 
-                        echo "→ Create namespace if not exists"
+                        echo "→ Create namespace"
                         kubectl create namespace ${K8S_NAMESPACE} || true
 
                         echo "→ Apply manifests"
@@ -134,55 +132,75 @@ pipeline {
             steps {
                 echo '🏥 STAGE 7 — Health Check'
 
-                sh '''
-                    sleep 20
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
 
-                    RUNNING=$(kubectl get pods \
-                        -n ${K8S_NAMESPACE} \
-                        --field-selector=status.phase=Running \
-                        --no-headers | wc -l)
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG
 
-                    if [ "${RUNNING}" -lt "1" ]; then
-                        echo "❌ No running pods"
-                        exit 1
-                    fi
+                        echo "→ Waiting for pods..."
+                        sleep 20
 
-                    kubectl port-forward service/taskmanager-service \
-                        ${APP_PORT}:${APP_PORT} \
-                        -n ${K8S_NAMESPACE} &
+                        echo "→ Checking pods..."
+                        kubectl get pods -n ${K8S_NAMESPACE}
 
-                    PF_PID=$!
-                    sleep 5
+                        RUNNING=$(kubectl get pods \
+                            -n ${K8S_NAMESPACE} \
+                            --field-selector=status.phase=Running \
+                            --no-headers | wc -l)
 
-                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-                        http://localhost:${APP_PORT}/health || echo "000")
+                        echo "Running pods: ${RUNNING}"
 
-                    kill ${PF_PID} || true
+                        if [ "${RUNNING}" -lt "1" ]; then
+                            echo "❌ No running pods"
+                            exit 1
+                        fi
 
-                    if [ "${STATUS}" != "200" ]; then
-                        echo "❌ Health check failed"
-                        exit 1
-                    fi
+                        echo "→ Port forwarding..."
+                        kubectl port-forward service/taskmanager-service \
+                            ${APP_PORT}:${APP_PORT} \
+                            -n ${K8S_NAMESPACE} >/dev/null 2>&1 &
 
-                    echo "✅ Health check passed"
-                '''
+                        PF_PID=$!
+                        sleep 5
+
+                        echo "→ Checking health endpoint..."
+                        STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                            http://localhost:${APP_PORT}/health || echo "000")
+
+                        echo "HTTP Status: ${STATUS}"
+
+                        kill ${PF_PID} || true
+
+                        if [ "${STATUS}" != "200" ]; then
+                            echo "❌ Health check failed"
+                            exit 1
+                        fi
+
+                        echo "✅ Health check passed"
+                    '''
+                }
             }
         }
 
         stage('Rollback') {
             when {
-                expression { currentBuild.result == 'FAILURE' }
+                expression { currentBuild.currentResult == 'FAILURE' }
             }
             steps {
                 echo '⏪ STAGE 8 — Rollback'
 
-                sh '''
-                    kubectl rollout undo deployment/${K8S_DEPLOYMENT} \
-                        -n ${K8S_NAMESPACE}
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
 
-                    kubectl rollout status deployment/${K8S_DEPLOYMENT} \
-                        -n ${K8S_NAMESPACE}
-                '''
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG
+
+                        kubectl rollout undo deployment/${K8S_DEPLOYMENT} \
+                            -n ${K8S_NAMESPACE}
+
+                        kubectl rollout status deployment/${K8S_DEPLOYMENT} \
+                            -n ${K8S_NAMESPACE}
+                    '''
+                }
             }
         }
     }
@@ -199,4 +217,3 @@ pipeline {
         }
     }
 }
-
