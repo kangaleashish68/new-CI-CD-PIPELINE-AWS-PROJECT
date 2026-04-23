@@ -39,6 +39,7 @@ pipeline {
         IMAGE_TAG         = "${IMAGE_NAME}:${BUILD_NUMBER}"   // e.g. user/app:5
         IMAGE_LATEST      = "${IMAGE_NAME}:latest"
 
+<<<<<<< HEAD
         // Kubernetes
         K8S_NAMESPACE     = "taskmanager"
         K8S_DEPLOYMENT    = "taskmanager-app"
@@ -47,10 +48,23 @@ pipeline {
         // Health check
         APP_PORT          = "3000"
         HEALTH_URL        = "http://localhost:${APP_PORT}/health"
+=======
+        VERSION = "v1.${BUILD_NUMBER}"
+        IMAGE_NAME   = "${DOCKER_HUB_CREDS_USR}/task-manager-app"
+        IMAGE_TAG    = "${IMAGE_NAME}:${VERSION}"
+        IMAGE_LATEST = "${IMAGE_NAME}:latest"
+
+        K8S_NAMESPACE  = "taskmanager"
+        K8S_DEPLOYMENT = "taskmanager-app"
+        K8S_CONTAINER  = "taskmanager-app"
+
+        APP_PORT = "3000"
+>>>>>>> 9532385cda2f2e45a3b4d636d5d651af58112249
     }
 
     stages {
 
+<<<<<<< HEAD
         // ════════════════════════════════════════════════
         // STAGE 1 — CHECKOUT
         // Pull latest code from GitHub
@@ -61,6 +75,12 @@ pipeline {
                 echo '📥 STAGE 1 — Checkout'
                 echo '═══════════════════════════════════'
 
+=======
+        // ✅ 1. Checkout
+        stage('Checkout') {
+            steps {
+                echo '📥 Checkout'
+>>>>>>> 9532385cda2f2e45a3b4d636d5d651af58112249
                 checkout scm
 
                 // Print commit info for logs
@@ -75,6 +95,7 @@ pipeline {
             }
         }
 
+<<<<<<< HEAD
         // ════════════════════════════════════════════════
         // STAGE 2 — INSTALL DEPENDENCIES
         // npm install inside Jenkins workspace
@@ -88,6 +109,26 @@ pipeline {
                 sh '''
                     echo "Node version: $(node --version)"
                     echo "NPM version : $(npm --version)"
+=======
+        // ✅ 2. Check changes (skip build if no changes)
+        stage('Check Changes') {
+            steps {
+                script {
+                    def changes = sh(script: "git diff --name-only HEAD~1 HEAD || true", returnStdout: true).trim()
+                    if (!changes) {
+                        echo "❌ No changes detected. Skipping build."
+                        currentBuild.result = 'SUCCESS'
+                        error("Stopping pipeline")
+                    }
+                }
+            }
+        }
+
+        // ✅ 3. Install dependencies
+        stage('Install Dependencies') {
+            steps {
+                sh '''
+>>>>>>> 9532385cda2f2e45a3b4d636d5d651af58112249
                     npm install
                     echo "Packages installed: $(ls node_modules | wc -l)"
                 '''
@@ -125,6 +166,7 @@ pipeline {
             }
         }
 
+<<<<<<< HEAD
         // ════════════════════════════════════════════════
         // STAGE 4 — BUILD DOCKER IMAGE
         // Builds image and tags with BUILD_NUMBER + latest
@@ -135,6 +177,36 @@ pipeline {
                 echo '🐳 STAGE 4 — Build Docker Image'
                 echo '═══════════════════════════════════'
 
+=======
+        // ✅ 4. Parallel checks (lint + security)
+        stage('Quality Checks') {
+            parallel {
+                stage('Lint') {
+                    steps {
+                        sh 'npm run lint || true'
+                    }
+                }
+                stage('Security Scan') {
+                    steps {
+                        sh 'npm audit || true'
+                    }
+                }
+            }
+        }
+
+        // ✅ 5. Test stage
+        stage('Run Tests') {
+            steps {
+                sh '''
+                    npm test || true
+                '''
+            }
+        }
+
+        // ✅ 6. Build Docker Image
+        stage('Build Docker Image') {
+            steps {
+>>>>>>> 9532385cda2f2e45a3b4d636d5d651af58112249
                 sh '''
                     # Fix docker socket permission
                     chmod 666 /var/run/docker.sock || true
@@ -145,6 +217,7 @@ pipeline {
                     docker build \
                         -t ${IMAGE_TAG} \
                         -t ${IMAGE_LATEST} \
+<<<<<<< HEAD
                         --build-arg BUILD_NUMBER=${BUILD_NUMBER} \
                         .
 
@@ -152,10 +225,14 @@ pipeline {
                     docker images ${IMAGE_NAME} --format "{{.Tag}} → {{.Size}}"
 
                     echo "✅ Docker image built: ${IMAGE_TAG}"
+=======
+                        .
+>>>>>>> 9532385cda2f2e45a3b4d636d5d651af58112249
                 '''
             }
         }
 
+<<<<<<< HEAD
         // ════════════════════════════════════════════════
         // STAGE 5 — PUSH TO DOCKER HUB
         // Pushes both versioned and latest tags
@@ -166,6 +243,11 @@ pipeline {
                 echo '⬆️  STAGE 5 — Push to Docker Hub'
                 echo '═══════════════════════════════════'
 
+=======
+        // ✅ 7. Push Docker Image
+        stage('Push to Docker Hub') {
+            steps {
+>>>>>>> 9532385cda2f2e45a3b4d636d5d651af58112249
                 sh '''
                     # Login to Docker Hub
                     echo ${DOCKER_HUB_CREDS_PSW} | docker login \
@@ -190,6 +272,7 @@ pipeline {
             }
         }
 
+<<<<<<< HEAD
         // ════════════════════════════════════════════════
         // STAGE 6 — DEPLOY TO KUBERNETES
         // Applies k8s files and updates image
@@ -237,9 +320,112 @@ pipeline {
 
                     echo "✅ Kubernetes deployment complete"
                 '''
+=======
+        // ✅ 8. Deploy to DEV
+        stage('Deploy to Dev') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG
+                        kubectl apply -f k8s/dev/
+                    '''
+                }
             }
         }
 
+        // ✅ 9. Deploy to STAGING
+        stage('Deploy to Staging') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG
+                        kubectl apply -f k8s/staging/
+                    '''
+                }
+            }
+        }
+
+        // ✅ 10. Manual Approval
+        stage('Approval') {
+            steps {
+                input message: 'Deploy to PRODUCTION?', ok: 'Yes Deploy'
+            }
+        }
+
+        // ✅ 11. Deploy to PRODUCTION
+        stage('Deploy to Production') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG
+
+                        kubectl apply -f k8s/prod/
+
+                        kubectl set image deployment/${K8S_DEPLOYMENT} \
+                            ${K8S_CONTAINER}=${IMAGE_TAG} \
+                            -n ${K8S_NAMESPACE}
+
+                        kubectl rollout status deployment/${K8S_DEPLOYMENT} \
+                            -n ${K8S_NAMESPACE}
+                    '''
+                }
+            }
+        }
+
+        // ✅ 12. Health Check
+        stage('Health Check') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG
+
+                        sleep 20
+
+                        STATUS=$(kubectl get pods -n ${K8S_NAMESPACE} --field-selector=status.phase=Running --no-headers | wc -l)
+
+                        if [ "$STATUS" -lt "1" ]; then
+                            echo "❌ No running pods"
+                            exit 1
+                        fi
+
+                        kubectl port-forward service/taskmanager-service \
+                            ${APP_PORT}:${APP_PORT} \
+                            -n ${K8S_NAMESPACE} >/dev/null 2>&1 &
+
+                        PF_PID=$!
+                        sleep 5
+
+                        HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+                            http://localhost:${APP_PORT}/health || echo "000")
+
+                        kill $PF_PID || true
+
+                        if [ "$HTTP" != "200" ]; then
+                            echo "❌ Health check failed"
+                            exit 1
+                        fi
+                    '''
+                }
+            }
+        }
+
+        // ✅ 13. Rollback
+        stage('Rollback') {
+            when {
+                expression { currentBuild.currentResult == 'FAILURE' }
+            }
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG
+                        kubectl rollout undo deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
+                    '''
+                }
+>>>>>>> 9532385cda2f2e45a3b4d636d5d651af58112249
+            }
+        }
+
+<<<<<<< HEAD
         // ════════════════════════════════════════════════
         // STAGE 7 — HEALTH CHECK
         // Waits for app to be ready then checks /health
@@ -362,9 +548,13 @@ pipeline {
     // ════════════════════════════════════════════════════
     // POST ACTIONS — Run after all stages
     // ════════════════════════════════════════════════════
+=======
+    // ✅ 14. Notifications
+>>>>>>> 9532385cda2f2e45a3b4d636d5d651af58112249
     post {
 
         success {
+<<<<<<< HEAD
             echo '═══════════════════════════════════'
             echo "✅ PIPELINE SUCCESS"
             echo "   Build Number : #${BUILD_NUMBER}"
@@ -377,9 +567,14 @@ pipeline {
                 echo "Final services:"
                 kubectl get services -n ${K8S_NAMESPACE}
             '''
+=======
+            mail to: 'testingwork462@gmail.com',
+                 subject: "✅ SUCCESS: Build ${BUILD_NUMBER}",
+                 body: "Pipeline completed successfully."
+>>>>>>> 9532385cda2f2e45a3b4d636d5d651af58112249
         }
-
         failure {
+<<<<<<< HEAD
             echo '═══════════════════════════════════'
             echo "❌ PIPELINE FAILED"
             echo "   Build Number : #${BUILD_NUMBER}"
@@ -394,8 +589,12 @@ pipeline {
                     --sort-by=.metadata.creationTimestamp \
                     | tail -10 || true
             '''
+=======
+            mail to: 'testingwork462@gmail.com',
+                 subject: "❌ FAILED: Build ${BUILD_NUMBER}",
+                 body: "Pipeline failed. Check Jenkins."
+>>>>>>> 9532385cda2f2e45a3b4d636d5d651af58112249
         }
-
         always {
             echo "→ Cleaning up old Docker images..."
             sh 'docker image prune -f || true'
@@ -403,5 +602,8 @@ pipeline {
         }
 
     }
+<<<<<<< HEAD
 
+=======
+>>>>>>> 9532385cda2f2e45a3b4d636d5d651af58112249
 }
