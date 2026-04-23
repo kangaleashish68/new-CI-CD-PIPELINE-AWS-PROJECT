@@ -1,0 +1,16 @@
+# ══════════════════════════════════════════════════════
+#   CONFIGMAP — Stores non-sensitive configuration
+#   Like .env file but for Kubernetes
+# ══════════════════════════════════════════════════════
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taskmanager-config
+  namespace: taskmanager
+data:
+  DB_HOST:   "mysql-service"   # ← name of MySQL service in k8s
+  DB_PORT:   "3306"
+  DB_USER:   "root"
+  DB_NAME:   "taskmanager"
+  PORT:      "3000"
