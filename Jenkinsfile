@@ -217,12 +217,12 @@ pipeline {
     // ✅ 14. Notifications
     post {
         success {
-            mail to: 'your-email@gmail.com',
+            mail to: 'testingwork462@gmail.com',
                  subject: "✅ SUCCESS: Build ${BUILD_NUMBER}",
                  body: "Pipeline completed successfully."
         }
         failure {
-            mail to: 'your-email@gmail.com',
+            mail to: 'testingwork462@gmail.com',
                  subject: "❌ FAILED: Build ${BUILD_NUMBER}",
                  body: "Pipeline failed. Check Jenkins."
         }
