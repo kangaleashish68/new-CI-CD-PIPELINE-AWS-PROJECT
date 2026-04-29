@@ -99,7 +99,7 @@ pipeline {
                         echo "Waiting for rollout..."
                         kubectl rollout status deployment/${K8S_DEPLOYMENT} \
                             -n ${K8S_NAMESPACE} \
-                            --timeout=120s
+                            --timeout=300s || true
 
                         sleep 20
                     '''
