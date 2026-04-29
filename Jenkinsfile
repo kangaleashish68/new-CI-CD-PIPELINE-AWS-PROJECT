@@ -89,7 +89,7 @@ pipeline {
                         kubectl cluster-info
 
                         echo "Applying K8s configs..."
-                        kubectl apply -f k8s/*.yaml
+                        kubectl apply -f k8s/
 
                         echo "Updating image..."
                         kubectl set image deployment/${K8S_DEPLOYMENT} \
