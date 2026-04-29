@@ -23,7 +23,7 @@ pipeline {
 
     stages {
 
-        // ✅ 1. Checkout
+        // 1. Checkout
         stage('Checkout') {
             steps {
                 echo '📥 Checkout'
@@ -31,16 +31,14 @@ pipeline {
             }
         }
 
-        // ✅ 2. Install Dependencies
+        // 2. Install Dependencies
         stage('Install Dependencies') {
             steps {
-                sh '''
-                    npm install
-                '''
+                sh 'npm install'
             }
         }
 
-        // ✅ 3. Code Quality Check
+        // 3. Code Quality Check
         stage('Code Quality Check') {
             steps {
                 sh '''
@@ -50,7 +48,7 @@ pipeline {
             }
         }
 
-        // ✅ 4. Build Docker Image
+        // 4. Build Docker Image
         stage('Build Docker Image') {
             steps {
                 sh '''
@@ -64,7 +62,7 @@ pipeline {
             }
         }
 
-        // ✅ 5. Push to Docker Hub
+        // 5. Push to Docker Hub
         stage('Push to Docker Hub') {
             steps {
                 sh '''
@@ -80,100 +78,109 @@ pipeline {
             }
         }
 
-        // ✅ 6. Deploy to Kubernetes
+        // 6. Deploy to Kubernetes
         stage('Deploy to Kubernetes') {
             steps {
-                sh '''
-                    echo "Applying K8s configs..."
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG
 
-                    kubectl apply -f k8s/
+                        echo "Cluster Info:"
+                        kubectl cluster-info
 
-                    echo "Updating image..."
-                    kubectl set image deployment/${K8S_DEPLOYMENT} \
-                        ${K8S_CONTAINER}=${IMAGE_TAG} \
-                        -n ${K8S_NAMESPACE}
+                        echo "Applying K8s configs..."
+                        kubectl apply -f k8s/*.yaml
 
-                    echo "Waiting for rollout..."
-                    kubectl rollout status deployment/${K8S_DEPLOYMENT} \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=120s
+                        echo "Updating image..."
+                        kubectl set image deployment/${K8S_DEPLOYMENT} \
+                            ${K8S_CONTAINER}=${IMAGE_TAG} \
+                            -n ${K8S_NAMESPACE}
 
-                    echo "Waiting for MySQL to be ready..."
-                    sleep 30
-                '''
+                        echo "Waiting for rollout..."
+                        kubectl rollout status deployment/${K8S_DEPLOYMENT} \
+                            -n ${K8S_NAMESPACE} \
+                            --timeout=120s
+
+                        sleep 20
+                    '''
+                }
             }
         }
 
-        // ✅ 7. Health Check
+        // 7. Health Check
         stage('Health Check') {
             steps {
-                sh '''
-                    echo "Checking pods..."
-                    kubectl get pods -n ${K8S_NAMESPACE}
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG
 
-                    RUNNING=$(kubectl get pods \
-                        -n ${K8S_NAMESPACE} \
-                        -l app=${K8S_DEPLOYMENT} \
-                        --field-selector=status.phase=Running \
-                        --no-headers | wc -l)
+                        kubectl get pods -n ${K8S_NAMESPACE}
 
-                    if [ "$RUNNING" -lt "1" ]; then
-                        echo "No running pods"
-                        exit 1
-                    fi
+                        RUNNING=$(kubectl get pods \
+                            -n ${K8S_NAMESPACE} \
+                            -l app=${K8S_DEPLOYMENT} \
+                            --field-selector=status.phase=Running \
+                            --no-headers | wc -l)
 
-                    kubectl port-forward service/taskmanager-service \
-                        ${APP_PORT}:${APP_PORT} \
-                        -n ${K8S_NAMESPACE} >/dev/null 2>&1 &
+                        if [ "$RUNNING" -lt "1" ]; then
+                            echo "No running pods"
+                            exit 1
+                        fi
 
-                    PF_PID=$!
-                    sleep 5
+                        kubectl port-forward service/taskmanager-service \
+                            ${APP_PORT}:${APP_PORT} \
+                            -n ${K8S_NAMESPACE} >/dev/null 2>&1 &
 
-                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-                        http://localhost:${APP_PORT}/health || echo "000")
+                        PF_PID=$!
+                        sleep 5
 
-                    kill $PF_PID || true
+                        STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                            http://localhost:${APP_PORT}/health || echo "000")
 
-                    if [ "$STATUS" != "200" ]; then
-                        echo "Health check failed"
-                        exit 1
-                    fi
+                        kill $PF_PID || true
 
-                    echo "App is healthy"
-                '''
+                        if [ "$STATUS" != "200" ]; then
+                            echo "Health check failed"
+                            exit 1
+                        fi
+
+                        echo "App is healthy"
+                    '''
+                }
             }
         }
 
-        // ✅ 8. Rollback
+        // 8. Rollback
         stage('Rollback') {
             when {
                 expression { currentBuild.currentResult == 'FAILURE' }
             }
             steps {
-                sh '''
-                    echo "Rolling back..."
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG
 
-                    kubectl rollout undo deployment/${K8S_DEPLOYMENT} \
-                        -n ${K8S_NAMESPACE}
+                        echo "Rolling back..."
 
-                    kubectl rollout status deployment/${K8S_DEPLOYMENT} \
-                        -n ${K8S_NAMESPACE}
-                '''
+                        kubectl rollout undo deployment/${K8S_DEPLOYMENT} \
+                            -n ${K8S_NAMESPACE}
+
+                        kubectl rollout status deployment/${K8S_DEPLOYMENT} \
+                            -n ${K8S_NAMESPACE}
+                    '''
+                }
             }
         }
     }
 
     post {
-
         success {
             echo "✅ Pipeline Success: ${IMAGE_TAG}"
         }
 
         failure {
             echo "❌ Pipeline Failed"
-            sh '''
-                kubectl get pods -n ${K8S_NAMESPACE} || true
-            '''
+            sh 'kubectl get pods -n taskmanager || true'
         }
 
         always {
