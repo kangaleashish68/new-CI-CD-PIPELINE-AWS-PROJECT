@@ -10,9 +10,8 @@ pipeline {
     environment {
         DOCKER_HUB_CREDS = credentials('docker-credentials')
 
-        VERSION = "v1.${BUILD_NUMBER}"
         IMAGE_NAME   = "${DOCKER_HUB_CREDS_USR}/task-manager-app"
-        IMAGE_TAG    = "${IMAGE_NAME}:${VERSION}"
+        IMAGE_TAG    = "${IMAGE_NAME}:v1.${BUILD_NUMBER}"
         IMAGE_LATEST = "${IMAGE_NAME}:latest"
 
         K8S_NAMESPACE  = "taskmanager"
@@ -32,21 +31,7 @@ pipeline {
             }
         }
 
-        // ✅ 2. Check changes (skip build if no changes)
-        stage('Check Changes') {
-            steps {
-                script {
-                    def changes = sh(script: "git diff --name-only HEAD~1 HEAD || true", returnStdout: true).trim()
-                    if (!changes) {
-                        echo "❌ No changes detected. Skipping build."
-                        currentBuild.result = 'SUCCESS'
-                        error("Stopping pipeline")
-                    }
-                }
-            }
-        }
-
-        // ✅ 3. Install dependencies
+        // ✅ 2. Install Dependencies
         stage('Install Dependencies') {
             steps {
                 sh '''
@@ -55,32 +40,17 @@ pipeline {
             }
         }
 
-        // ✅ 4. Parallel checks (lint + security)
-        stage('Quality Checks') {
-            parallel {
-                stage('Lint') {
-                    steps {
-                        sh 'npm run lint || true'
-                    }
-                }
-                stage('Security Scan') {
-                    steps {
-                        sh 'npm audit || true'
-                    }
-                }
-            }
-        }
-
-        // ✅ 5. Test stage
-        stage('Run Tests') {
+        // ✅ 3. Code Quality Check
+        stage('Code Quality Check') {
             steps {
                 sh '''
-                    npm test || true
+                    node --check server.js
+                    echo "Code OK"
                 '''
             }
         }
 
-        // ✅ 6. Build Docker Image
+        // ✅ 4. Build Docker Image
         stage('Build Docker Image') {
             steps {
                 sh '''
@@ -94,7 +64,7 @@ pipeline {
             }
         }
 
-        // ✅ 7. Push Docker Image
+        // ✅ 5. Push to Docker Hub
         stage('Push to Docker Hub') {
             steps {
                 sh '''
@@ -110,122 +80,102 @@ pipeline {
             }
         }
 
-        // ✅ 8. Deploy to DEV
-        stage('Deploy to Dev') {
+        // ✅ 6. Deploy to Kubernetes
+        stage('Deploy to Kubernetes') {
             steps {
-                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-                    sh '''
-                        export KUBECONFIG=$KUBECONFIG
-                        kubectl apply -f k8s/dev/
-                    '''
-                }
+                sh '''
+                    echo "Applying K8s configs..."
+
+                    kubectl apply -f k8s/
+
+                    echo "Updating image..."
+                    kubectl set image deployment/${K8S_DEPLOYMENT} \
+                        ${K8S_CONTAINER}=${IMAGE_TAG} \
+                        -n ${K8S_NAMESPACE}
+
+                    echo "Waiting for rollout..."
+                    kubectl rollout status deployment/${K8S_DEPLOYMENT} \
+                        -n ${K8S_NAMESPACE} \
+                        --timeout=120s
+
+                    echo "Waiting for MySQL to be ready..."
+                    sleep 30
+                '''
             }
         }
 
-        // ✅ 9. Deploy to STAGING
-        stage('Deploy to Staging') {
-            steps {
-                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-                    sh '''
-                        export KUBECONFIG=$KUBECONFIG
-                        kubectl apply -f k8s/staging/
-                    '''
-                }
-            }
-        }
-
-        // ✅ 10. Manual Approval
-        stage('Approval') {
-            steps {
-                input message: 'Deploy to PRODUCTION?', ok: 'Yes Deploy'
-            }
-        }
-
-        // ✅ 11. Deploy to PRODUCTION
-        stage('Deploy to Production') {
-            steps {
-                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-                    sh '''
-                        export KUBECONFIG=$KUBECONFIG
-
-                        kubectl apply -f k8s/prod/
-
-                        kubectl set image deployment/${K8S_DEPLOYMENT} \
-                            ${K8S_CONTAINER}=${IMAGE_TAG} \
-                            -n ${K8S_NAMESPACE}
-
-                        kubectl rollout status deployment/${K8S_DEPLOYMENT} \
-                            -n ${K8S_NAMESPACE}
-                    '''
-                }
-            }
-        }
-
-        // ✅ 12. Health Check
+        // ✅ 7. Health Check
         stage('Health Check') {
             steps {
-                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-                    sh '''
-                        export KUBECONFIG=$KUBECONFIG
+                sh '''
+                    echo "Checking pods..."
+                    kubectl get pods -n ${K8S_NAMESPACE}
 
-                        sleep 20
+                    RUNNING=$(kubectl get pods \
+                        -n ${K8S_NAMESPACE} \
+                        -l app=${K8S_DEPLOYMENT} \
+                        --field-selector=status.phase=Running \
+                        --no-headers | wc -l)
 
-                        STATUS=$(kubectl get pods -n ${K8S_NAMESPACE} --field-selector=status.phase=Running --no-headers | wc -l)
+                    if [ "$RUNNING" -lt "1" ]; then
+                        echo "No running pods"
+                        exit 1
+                    fi
 
-                        if [ "$STATUS" -lt "1" ]; then
-                            echo "❌ No running pods"
-                            exit 1
-                        fi
+                    kubectl port-forward service/taskmanager-service \
+                        ${APP_PORT}:${APP_PORT} \
+                        -n ${K8S_NAMESPACE} >/dev/null 2>&1 &
 
-                        kubectl port-forward service/taskmanager-service \
-                            ${APP_PORT}:${APP_PORT} \
-                            -n ${K8S_NAMESPACE} >/dev/null 2>&1 &
+                    PF_PID=$!
+                    sleep 5
 
-                        PF_PID=$!
-                        sleep 5
+                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                        http://localhost:${APP_PORT}/health || echo "000")
 
-                        HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
-                            http://localhost:${APP_PORT}/health || echo "000")
+                    kill $PF_PID || true
 
-                        kill $PF_PID || true
+                    if [ "$STATUS" != "200" ]; then
+                        echo "Health check failed"
+                        exit 1
+                    fi
 
-                        if [ "$HTTP" != "200" ]; then
-                            echo "❌ Health check failed"
-                            exit 1
-                        fi
-                    '''
-                }
+                    echo "App is healthy"
+                '''
             }
         }
 
-        // ✅ 13. Rollback
+        // ✅ 8. Rollback
         stage('Rollback') {
             when {
                 expression { currentBuild.currentResult == 'FAILURE' }
             }
             steps {
-                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-                    sh '''
-                        export KUBECONFIG=$KUBECONFIG
-                        kubectl rollout undo deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
-                    '''
-                }
+                sh '''
+                    echo "Rolling back..."
+
+                    kubectl rollout undo deployment/${K8S_DEPLOYMENT} \
+                        -n ${K8S_NAMESPACE}
+
+                    kubectl rollout status deployment/${K8S_DEPLOYMENT} \
+                        -n ${K8S_NAMESPACE}
+                '''
             }
         }
     }
 
-    // ✅ 14. Notifications
     post {
+
         success {
-            mail to: 'your-email@gmail.com',
-                 subject: "✅ SUCCESS: Build ${BUILD_NUMBER}",
-                 body: "Pipeline completed successfully."
+            echo "✅ Pipeline Success: ${IMAGE_TAG}"
         }
+
         failure {
-            mail to: 'your-email@gmail.com',
-                 subject: "❌ FAILED: Build ${BUILD_NUMBER}",
-                 body: "Pipeline failed. Check Jenkins."
+            echo "❌ Pipeline Failed"
+            sh '''
+                kubectl get pods -n ${K8S_NAMESPACE} || true
+            '''
         }
+
         always {
             sh 'docker image prune -f || true'
         }

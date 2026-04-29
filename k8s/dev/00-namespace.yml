@@ -1,12 +1,4 @@
-# ══════════════════════════════════════════════════════
-#   NAMESPACE
-#   All our resources go inside "taskmanager" namespace
-#   Think of namespace = separate folder in Kubernetes
-# ══════════════════════════════════════════════════════
-
 apiVersion: v1
 kind: Namespace
 metadata:
   name: taskmanager
-  labels:
-    app: task-manager
